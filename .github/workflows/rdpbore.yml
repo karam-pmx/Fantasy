@@ -57,20 +57,34 @@ jobs:
       - name: Install bore CLI
         shell: pwsh
         run: |
-          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/ekzhang/bore/releases/latest"
-          $asset = $release.assets | Where-Object { $_.name -match "x86_64-pc-windows-msvc\.tar\.gz$" } | Select-Object -First 1
+          $headers = @{ "User-Agent" = "GitHub-Actions-RDP" }
+          if ($env:GITHUB_TOKEN) {
+              $headers["Authorization"] = "Bearer $env:GITHUB_TOKEN"
+          }
+
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/ekzhang/bore/releases/latest" -Headers $headers
+          $asset = $release.assets | Where-Object {
+              $_.name -match "x86_64-pc-windows-msvc\.(zip|tar\.gz)$"
+          } | Select-Object -First 1
+
           if (-not $asset) {
-              Write-Error "Could not find Windows x86_64 bore release asset."
+              $available = ($release.assets | ForEach-Object { $_.name }) -join ", "
+              Write-Error "Could not find Windows x86_64 bore release asset. Available assets: $available"
               exit 1
           }
 
-          $archivePath = "$env:RUNNER_TEMP\bore.tar.gz"
+          $archivePath = Join-Path $env:RUNNER_TEMP $asset.name
           $extractDir = "$env:RUNNER_TEMP\bore_extract"
           $installDir = "$env:RUNNER_TEMP\bore_bin"
 
           New-Item -ItemType Directory -Path $extractDir, $installDir -Force | Out-Null
           Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archivePath
-          tar -xzf $archivePath -C $extractDir
+
+          if ($asset.name -like "*.zip") {
+              Expand-Archive -Path $archivePath -DestinationPath $extractDir -Force
+          } else {
+              tar -xzf $archivePath -C $extractDir
+          }
 
           $boreExe = Get-ChildItem -Path $extractDir -Filter "bore.exe" -Recurse | Select-Object -First 1
           if (-not $boreExe) {
