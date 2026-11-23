@@ -62,21 +62,38 @@ jobs:
           $zipPath = "$env:RUNNER_TEMP\bore.zip"
           New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 
-          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/ekzhang/bore/releases/latest" -Headers @{ "User-Agent" = "GitHub-Actions-RDP" }
-          $asset = $release.assets | Where-Object { $_.name -like "*x86_64-pc-windows-msvc.zip" } | Select-Object -First 1
+          $downloadUrl = $null
+          try {
+              $headers = @{
+                  "User-Agent" = "GitHub-Actions-RDP"
+                  "Accept"     = "application/vnd.github+json"
+              }
+              $release = Invoke-RestMethod -Uri "https://api.github.com/repos/ekzhang/bore/releases/latest" -Headers $headers
+              $asset = $release.assets | Where-Object { $_.name -match "windows.*\.zip$" } | Select-Object -First 1
+              if ($asset) {
+                  $downloadUrl = $asset.browser_download_url
+                  Write-Host "Found release asset: $($asset.name)"
+              }
+          } catch {
+              Write-Host "GitHub API lookup warning: $($_.Exception.Message)"
+          }
 
-          if (-not $asset) {
-              Write-Error "Could not find Windows x86_64 bore release asset."
+          if (-not $downloadUrl) {
+              $downloadUrl = "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip"
+              Write-Host "Using fallback URL: $downloadUrl"
+          }
+
+          curl.exe -fsSL --retry 3 -o $zipPath $downloadUrl
+          tar.exe -xf $zipPath -C $installDir
+
+          $boreExe = Get-ChildItem -Path $installDir -Filter "bore.exe" -Recurse | Select-Object -First 1
+          if (-not $boreExe) {
+              Write-Error "bore.exe not found after extracting $zipPath."
               exit 1
           }
 
-          # curl.exe and tar.exe are built into Windows and avoid PowerShell's slow progress bar / Expand-Archive overhead
-          curl.exe -fsSL --retry 3 -o $zipPath $asset.browser_download_url
-          tar.exe -xf $zipPath -C $installDir
-
-          if (-not (Test-Path "$installDir\bore.exe")) {
-              Write-Error "bore.exe not found after extraction."
-              exit 1
+          if ($boreExe.DirectoryName -ne $installDir) {
+              Move-Item -Path $boreExe.FullName -Destination "$installDir\bore.exe" -Force
           }
 
           echo "$installDir" >> $env:GITHUB_PATH
